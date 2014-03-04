@@ -1,0 +1,690 @@
+\documentclass{article}
+\usepackage[margin=0.5in]{geometry}
+
+\begin{document}
+\Sexpr{cat(sub("_", "\\\\\\_", version$platform))}
+
+% !Rnw root = TB_root.Rnw
+
+%% some of the output is missing when compiled to PDF
+%% when the regression is fit to models with lots of variable levels
+%% and so over lots of pages
+%%TODO%% check the output options limitations
+
+%% THIS SCRIPT IS A SLIMMED-DOWN VERSION OF TB_simple_regression.Rnw FOR A SINGLE DATA SET
+
+
+<<setup, eval=FALSE, echo=FALSE, message=FALSE, warning=FALSE, results='hide'>>=
+## don't print output (to avoid long regression summaries)
+opts_chunk$set(eval=FALSE)
+#opts_chunk$set(results="hide")
+@
+
+
+<<libraries, echo=FALSE, message=FALSE, warning=FALSE, results='hide'>>=
+library(reshape2)
+library(Hmisc)
+library(ggplot2)
+@
+
+<<load, echo=FALSE, message=FALSE, warning=FALSE, results='hide'>>=
+##
+## between ethnic group mixing
+## TB ETS regressions
+##
+## N Green
+## Nov 2013
+##
+## http://en.wikipedia.org/wiki/Poisson_regression
+
+
+## clear workspace
+rm(list=ls())
+
+wd <- "T:\\TB\\TB-Port-Screening\\analysis\\Rob\\modelling data"
+setwd(wd)
+
+
+load(file=".\\raw data\\preregrsn_ws.RData")
+
+#source(".\\R\\TB\\TB_preamble.R") ## produces the following variables
+source(".\\R\\TB\\plotting_fns.R")
+source(".\\R\\TB\\helper_fns.R")
+
+## 2011 data only
+## not really necessary to do this since time range is same across all LAs
+## population size acts as a weighting rather than a probability
+## assuming that the relative proportions stay pretty constant over years
+# data <- data[data$caserepdate<="2011-12-31" & data$caserepdate>"2010-12-31",]
+
+## create a new environment for all
+## the output variables
+output.env <- new.env()
+@
+
+
+%% data stratification
+Because it's possible that the ethnic group mixing/spread have systematically different patterns, in different LAs with different ethnic group compositions, it is sensible to split the data by proportion of Whites or non-UK borns.
+Then, we shall perform separate analyses for each subset.
+This is also useful in terms of clarity because there are so many LAs.
+Later-on, we'll investigate how best it would be to do this split but for the time being let us split the data set in to 3.
+
+
+<<stratification, eval=TRUE>>=
+## cut by proportion 'White'
+## strata interval ranges
+print(prop_intervals <- levels(strat$cutProp))
+## number of LAs in each strata
+nrow(strat[strat$cutProp==prop_intervals[1],])
+
+## only do analysis for one stratum and remove others
+## 1: lowest proportion of Whites
+level <- 1  #2,3
+print(las <- strat$la[strat$cutProp==prop_intervals[level]])
+
+## assign working lookup data set
+glm.dat <- glm.sex_ethgrp_agegrp3
+
+## explanatory variables in lookup data set
+print(vars <- colnames(glm.dat)[!colnames(glm.dat)%in%c("pop","tb","prop")])
+
+## remove unwanted LAs
+glm.dat <- glm.dat[glm.dat$la%in%las,]
+@
+
+
+
+
+
+Poisson regression with an exposure input will be used. The model has the form
+$$
+y_i \sim \mbox{Poisson} (u_i \theta_i),
+$$
+with a linear regression on the log scale,
+$$
+\theta_i = \exp(X_i \beta).
+$$
+The log exposure is called the {\it offset}.
+
+We shall compare the Poisson and binomial model fits. The Poisson model is more appropriate when $y_i$ do not have a natural limit. This is clearly the case here because of the population sizes but the relative numbers of TB activations are small so there is little difference between the two models.
+
+The model description is as follows:
+
+\begin{itemize}
+\item The units $i$ are variable combination groups e.g. LA and ethnic group
+\item The outcome $y_i$ is the number of diagnosed TB activations in that group
+\item The exposure $u_i$ is the subpopulation size within a group
+\item The inputs are the groups indexes
+\item The predictors are constant
+\end{itemize}
+
+The models in this section can be generally described as
+{\bf complete-pooling},
+{\bf no-pooling} and
+{\bf separate models}.
+A study of these models is revealing in its own right and can also be thought of an initial analysis stage towards the hierarchical/multilevel models, investigated later-on.
+
+
+
+\paragraph{Complete-pooling}
+This is treating the whole data as one homogeneous population without distinguishing between any of the individual's characteristics.
+This model can serve as a baseline case.
+
+<<completePooling2>>=
+## Complete-pooling model
+## ignoring group information
+## offset and constant term only
+
+summary(output.env$fit.complpool <- glm(tb ~ 1, family=poisson(link=log), data=glm.dat, offset=log(pop) ))
+@
+
+%%TODO%%
+%The intercept term is \Sexpr(fit.pois.pool$coefficients).
+
+The intercept term is $-7.17$ and significant.
+The null deviance (and in this case the residual deviance as well) is $188770$.
+
+
+\paragraph{Separate models: By LA}
+Let us fit each LA independently of one another and pool by sex and age group within each one.
+
+%<<separate_LA2, eval=FALSE, results=tex >>=
+<<separate_LA2, eval=TRUE>>=
+## within a single LA
+output.env$fit.ethgrp.sep_la <- fitSep(glm.dat, sepvar="la", regvars="ethgrp")
+@
+
+
+
+\paragraph{Separate models: By ethnic group}
+Fit each ethnic group independently and pool by sex and age group.
+
+<<separate_ethgrp2, eval=TRUE>>=
+##
+output.env$fit.la.sep_ethgrp <- fitSep(glm.dat, sepvar="ethgrp", regvars="la")
+@
+
+<<plots_separate_ethgrp>>=
+## TODO ##
+@
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\paragraph{Separate models: By LA with age}
+Fit each LA independently and pool by sex.
+
+<<separateLA_poolsex, eval=TRUE>>=
+## within a single LA
+output.env$fit.ethgrpage.sep_la <- fitSep(glm.dat, sepvar="la", regvars=c("ethgrp","agegrp3"))
+@
+
+<<plots_separateLA_poolsex, eval=TRUE, fig.ext='png'>>=
+#la <- "Lewisham"
+lapply(names(output.env$fit.ethgrpage.sep_la), function(la)
+                                                plot_datpred(x="agegrp3", group="ethgrp", dat=glm.dat, fit=output.env$fit.ethgrpage.sep_la, strat=la, stratname="la"))
+@
+
+
+\paragraph{Separate models: By ethnic group with age}
+Fit each ethnic group independently and pool by sex.
+
+<<separateethgrp_poolsex, eval=TRUE>>=
+## within a single ethgrp
+output.env$fit.laage.sep_ethgrp <- fitSep(glm.dat, sepvar="ethgrp", regvars=c("la","agegrp3"))
+@
+
+<<plots_separateethgrp_poolsex, eval=TRUE, fig.ext='png'>>=
+## TODO ##
+## need to properly generalise
+lapply(names(output.env$fit.laage.sep_ethgrp), function(ethgrp)
+                                                plot_datpred(x="agegrp3", group="la", dat=glm.dat, fit=output.env$fit.laage.sep_ethgrp, strat=ethgrp, stratname="ethgrp"))
+@
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+The previous section was focussing on stratification of the data set in to different strata,
+e.g by LA or ethnicity.
+The next section will investigate different degrees of pooling without stratification.
+
+\paragraph{Partial pooled by LA}
+Next let us pool by LA, sex and age group, including ethnic group as a covariate.
+
+<<pool_lasexage>>=
+## ethnic group only
+## pooling across LAs
+summary(output.env$fit.ethgrp <- glm(tb ~ offset(log(pop)) + ethgrp, family=poisson(link=log), data=glm.dat))
+@
+
+All of the coefficients are clearly significant.
+Whites have the lowest coefficient estimate and Black-African the highest estimate.
+The residual deviance is $45793$.
+
+
+
+<<plot_pool_lasexage>>=
+## plots ##
+## comparable because would adjust for same subpopulation size for observations (Obs) and predictions (Pred)
+pred <- predict(output.env$fit.ethgrp, type="response")#/glm.dat$pop
+lst <- c(Obs=split(glm.dat$tb, glm.dat$ethgrp),
+         Pred=split(pred, glm.dat$ethgrp))
+
+namesNum <- length(names(lst))
+
+## TODO ## this is way too messy
+## reorder: interleave list elements
+lst <- lst[c(rbind(names(lst)[1:(namesNum/2)],
+                   names(lst)[((namesNum/2)+1):namesNum]))]
+names(lst)
+
+
+par(mar = c(9, 4, 4, 2) + 0.1)
+boxplot(lst, col=rep(c("gray","red"), len=length(lst)), las=2, ylim=c(0,50), ylab="Number of active TB cases", xaxt = "n",  xlab = "") 
+## 45 degree x-axis labels
+axis(1, labels = FALSE)
+text(1:namesNum, par("usr")[3] - 0.25, srt = 45, adj = 1,
+     labels = names(lst), xpd = TRUE)
+@
+
+
+
+
+\paragraph{Partial pool by ethnic group}
+
+We now include the LA (\texttt{la}) instead of ethnic group (\texttt{ethgrp}) as a covariate in the regression equation.
+
+<<pool_ethgrpsexage>>=
+## LA only
+## pool across ethnic groups
+summary(output.env$fit.la <- glm(tb ~ offset(log(pop)) + la, family=poisson(link=log), data=glm.dat))
+@
+
+
+
+
+
+
+
+
+
+
+
+Here, we could also have fitted regression models for \texttt{sex} only or \texttt{agegrp3} only.
+This is not the primary interest of this work so we jump straight to the full model.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\paragraph{Full model: Without other variables or ethnic group active TB proportions}
+
+Let us pool by age and sex.
+
+<<agesex_pool>>=
+summary(output.env$fit.ethgrpla <- glm(tb ~ ethgrp + la, offset=log(pop), family=poisson(link=log), data=glm.dat))
+@
+
+<<plot_agesex_pool, eval=TRUE>>=
+## TB proportions with a curve for each las by ethgrp
+plot_datpred(x="ethgrp", group="la", dat=glm.dat, fit=output.env$fit.ethgrpla)
+@
+
+
+\paragraph{Full model: Without other ethnic group active TB proportions}
+Control now for age and sex too in contrast to previous fits.
+
+<<full_model2>>=
+## full model without interactions
+summary(output.env$fit.full <- glm(tb ~ offset(log(pop))+ agegrp3 + sex + ethgrp + la,
+                                   family=poisson(link=log), data=glm.dat))
+@
+
+%% TODO %%
+%% fix this so then can compare fitted model with extra covariates included with
+%% fitted model with them excluded (pooled) above
+
+<<plot_full_model2, eval=T>>=
+##TODO##
+## TB proportions with a curve for each las by ethgrp
+plot_datpred(x="agegrp3", group="ethgrp", dat=glm.dat, fit=output.env$fit.full)
+@
+
+
+Using an ANOVA test we will now test between different models by removing certain covariates from the full model above.
+
+<<full_model2_tests>>=
+## test for significance
+summary(output.env$fit.ethgrpagela <- update(output.env$fit.full, .~. -sex))
+anova(output.env$fit.ethgrpagela, output.env$fit.full, test="Chisq")
+
+summary(output.env$fit.agelasex <- update(output.env$fit.full, .~. -ethgrp))
+anova(output.env$fit.agelasex, output.env$fit.full, test="Chisq")
+
+summary(output.env$fit.ethgrplasex <- update(output.env$fit.full, .~. -agegrp3))
+anova(output.env$fit.ethgrplasex, output.env$fit.full, test="Chisq")
+
+summary(output.env$fit.ethgrpagesex <- update(output.env$fit.full, .~. -la))
+anova(output.env$fit.ethgrpagesex, output.env$fit.full, test="Chisq")
+@
+
+
+<<binom_compare>>=
+## compare with different binomial models
+summary(glm(cbind(tb, pop-tb) ~ ethgrp + la + sex + agegrp3, family=binomial(link=logit), data=glm.dat))
+summary(glm(cbind(tb, pop-tb) ~ ethgrp + la + sex + agegrp3, family=quasibinomial, data=glm.dat))
+@
+
+
+<<predict2>>=
+## predicted against observed
+
+## test
+all(output.env$fit.full$fitted.values[1:20] == predict(output.env$fit.full, type="response")[1:20])
+
+dat.grid <- with(output.env$fit.full$model,
+                 expand.grid(ethgrp=levels(ethgrp),
+                              la=levels(la),
+                              sex=levels(as.factor(sex)),
+                              agegrp3=levels(agegrp3)))
+
+dat.grid <- cbind(dat.grid, pop=1)
+
+pred.grid <- predict(object=output.env$fit.full, newdata=dat.grid, type="response")
+@
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\paragraph{Full model: With other ethgrp TB proportions or absolute numbers}
+
+The most complete non-multilevel model we will consider is to include the proportions of active TB cases in the ethnic groups as additional explanatory variables.
+This will act as a comparitor against the multilevel equivalent model.
+
+For each separate ethnic group outcomes, the model has the form
+$$
+y_i \sim \mbox{Poisson} (u_i \theta_i),
+$$
+$$
+\theta_i = \exp(\mu + agegrp3 + sex + ethgrp1 + ethgrp2 + \cdots + la).
+$$
+
+We first create the enlarged array.
+
+<<propethgrp>>=
+## proportion of active TB within each ethnic group by la
+head(prop.ethgrp)
+@
+
+
+Create aggregated array for non-UK born and ethnic group by LA of absolute number of active TB cases (rather than propertions).
+
+<<>>=
+tb.ethgrpukborn <- aggregate(ETSdata[,1], by=list(ETSdata$la, ETSdata$ethgrp, ETSdata$ukborn), FUN="length")  #ETSdata$agegrp3, ETSdata$sex
+names(tb.ethgrpukborn) <- c("la","ethgrp","ukborn","tb")  #,"agegrp3","sex"
+tb.ethgrpukborn <- dcast(tb.ethgrpukborn, la~ethgrp+ukborn, value.var="tb", fun.aggregate=sum)
+@
+
+Join together the lowest level data (by la, age, ethnic group, sex) with the la level summary data.
+
+<<glm.mlevel, eval=TRUE>>=
+## join to give total data set for all ethnic groups
+glm.mlevel <- merge(glm.dat, prop.ethgrp)
+glm.mlevel <- merge(glm.mlevel, tb.ethgrpukborn)
+
+## clean ethnic group names
+names(glm.mlevel) <- gsub("/", "", names(glm.mlevel))
+names(glm.mlevel) <- gsub("-", "", names(glm.mlevel))
+names(glm.mlevel) <- gsub("_", "", names(glm.mlevel))
+
+head(glm.mlevel)
+@
+
+
+
+
+
+Then fit the separate models for each ethnic group separately.
+
+<<>>=
+##TODO##
+## this is messy
+## why is there an extra Blackother group?
+ethgrp.names <- setdiff(ethgrp.names.simple, c("Blackother"))
+@
+
+
+\paragraph{Partial pooled ethnic groups and LAs: With individual and group (LA) level predictors, White active TB cases only:}
+This regression is the most of interest of all of the following because it is assumed that non-White non-UK born are index cases.
+
+<<white_prep>>=
+glm.white <- subset(glm.mlevel, ethgrp=="White")
+print("White")
+@
+
+<<white_only_prop>>=
+ethgrp.formula <- getformula(setdiff(ethgrp.names, c("White")))
+# ethgrp.formula <- getformula(setdiff(ethgrp.names,c("White", "blackcaribbean", "Indian", "Pakistani", "Bangladeshi", "Chinese", "Mixedother")))
+
+## la level ethnic group tb proportions
+summary(output.env$fit.prop.white <- glm(ethgrp.formula, family=poisson(link=log), data=glm.white))
+
+## predicted absolute tb cases
+pred.prop.white <- predict(object=output.env$fit.prop.white, newdata=glm.white, type="response")
+glm.white <- cbind(glm.white, pred.prop.white)
+@
+
+<<white_only_abs>>=
+ethgrpukborn.formula <- getformula(setdiff(ethgrpUKborn.names, c("WhiteNonUKborn", "WhiteUKborn")))
+
+## la level ethnic group x ukborn absolute values of active tb
+summary(output.env$fit.abs.white <- glm(ethgrpukborn.formula, family=poisson(link=log), data=glm.white))
+
+## predicted absolute tb cases
+pred.abs.white <- predict(object=output.env$fit.abs.white, newdata=glm.white, type="response")
+glm.white <- cbind(glm.white, pred.abs.white)
+@
+
+
+
+
+
+\paragraph{Partial pooled ethnic groups and LAs: With individual and group (LA) level predictors, Black-African active TB cases only:}
+
+<<blackafrican_prep>>=
+glm.blackafrican <- subset(glm.mlevel, ethgrp=="Black-African")
+print("Black-African")
+@
+
+<<blackafrican_only_prop>>=
+ethgrp.formula <- getformula(setdiff(ethgrp.names, c("BlackAfrican")))
+
+## la level ethnic group tb proportions
+summary(output.env$fit.prop.blackafrican <- glm(ethgrp.formula, family=poisson(link=log), data=glm.blackafrican))
+
+## predicted absolute tb cases
+pred.prop.blackafrican <- predict(object=output.env$fit.prop.blackafrican, newdata=glm.blackafrican, type="response")
+glm.blackafrican <- cbind(glm.blackafrican, pred.prop.blackafrican)
+@
+
+<<blackafrican_only_abs>>=
+ethgrpukborn.formula <- getformula(setdiff(ethgrpUKborn.names, c("BlackAfricanNonUKborn", "BlackAfricanUKborn")))
+
+## la level ethnic group x ukborn absolute values of active tb
+summary(output.env$fit.abs.blackafrican <- glm(ethgrpukborn.formula, family=poisson(link=log), data=glm.blackafrican))
+
+## predicted absolute tb cases
+pred.abs.blackafrican <- predict(object=output.env$fit.abs.blackafrican, newdata=glm.blackafrican, type="response")
+glm.blackafrican <- cbind(glm.blackafrican, pred.abs.blackafrican)
+@
+
+
+
+\paragraph{Partial pooled ethnic groups and LAs: With individual and group (LA) level predictors, Bangladeshi active TB cases only:}
+
+<<bangladeshi_prep>>=
+glm.bangladeshi <- subset(glm.mlevel, ethgrp=="Bangladeshi")
+print("Bangladeshi")
+@
+
+<<bangladeshi_only_prop>>=
+ethgrp.formula <- getformula(setdiff(ethgrp.names, c("Bangladeshi")))
+
+## la level ethnic group tb proportions
+summary(output.env$fit.prop.bangladeshi <- glm(ethgrp.formula, family=poisson(link=log), data=glm.bangladeshi))
+
+## predicted absolute tb cases
+pred.prop.bangladeshi <- predict(object=output.env$fit.prop.bangladeshi, newdata=glm.bangladeshi, type="response")
+glm.bangladeshi <- cbind(glm.bangladeshi, pred.prop.bangladeshi)
+@
+
+<<bangladeshi_only_abs>>=
+ethgrpukborn.formula <- getformula(setdiff(ethgrpUKborn.names, c("BangladeshiNonUKborn", "BangladeshiUKborn")))
+
+## la level ethnic group x ukborn absolute values of active tb
+summary(output.env$fit.abs.bangladeshi <- glm(ethgrpukborn.formula, family=poisson(link=log), data=glm.bangladeshi))
+
+## predicted absolute tb cases
+pred.abs.bangladeshi <- predict(object=output.env$fit.abs.bangladeshi, newdata=glm.bangladeshi, type="response")
+glm.bangladeshi <- cbind(glm.bangladeshi, pred.abs.bangladeshi)
+@
+
+
+\paragraph{Partial pooled ethnic groups and LAs: With individual and group (LA) level predictors, Black-Caribbean active TB cases only:}
+
+<<blackcaribbean_prep>>=
+glm.blackcaribbean <- subset(glm.mlevel, ethgrp=="Black-Caribbean")
+print("Black-Caribbean")
+@
+
+<<blackcaribbean_only_prop>>=
+ethgrp.formula <- getformula(setdiff(ethgrp.names, c("BlackCaribbean")))
+
+## la level ethnic group tb proportions
+summary(output.env$fit.prop.blackcaribbean <- glm(ethgrp.formula, family=poisson(link=log), data=glm.blackcaribbean))
+
+## predicted absolute tb cases
+pred.prop.blackcaribbean <- predict(object=output.env$fit.prop.blackcaribbean, newdata=glm.blackcaribbean, type="response")
+glm.blackcaribbean <- cbind(glm.blackcaribbean, pred.prop.blackcaribbean)
+@
+
+<<blackcaribbean_only_abs>>=
+ethgrpukborn.formula <- getformula(setdiff(ethgrpUKborn.names, c("BlackCaribbeanNonUKborn", "BlackCaribbeanUKborn")))
+
+## la level ethnic group x ukborn absolute values of active tb
+summary(output.env$fit.abs.blackcaribbean <- glm(ethgrpukborn.formula, family=poisson(link=log), data=glm.blackcaribbean))
+
+## predicted absolute tb cases
+pred.abs.blackcaribbean <- predict(object=output.env$fit.abs.blackcaribbean, newdata=glm.blackcaribbean, type="response")
+glm.blackcaribbean <- cbind(glm.blackcaribbean, pred.abs.blackcaribbean)
+@
+
+
+\paragraph{Partial pooled ethnic groups and LAs: With individual and group (LA) level predictors, Chinese active TB cases only:}
+
+<<chinese_prep>>=
+glm.chinese <- subset(glm.mlevel, ethgrp=="Chinese")
+print("Chinese")
+@
+
+<<chinese_only_prop>>=
+ethgrp.formula <- getformula(setdiff(ethgrp.names, c("Chinese")))
+
+## la level ethnic group tb proportions
+summary(output.env$fit.prop.chinese <- glm(ethgrp.formula, family=poisson(link=log), data=glm.chinese))
+
+## predicted absolute tb cases
+pred.prop.chinese <- predict(object=output.env$fit.prop.chinese, newdata=glm.chinese, type="response")
+glm.chinese <- cbind(glm.chinese, pred.prop.chinese)
+@
+
+<<chinese_only_abs>>=
+ethgrpukborn.formula <- getformula(setdiff(ethgrpUKborn.names, c("ChineseNonUKborn", "ChineseUKborn")))
+
+## la level ethnic group x ukborn absolute values of active tb
+summary(output.env$fit.abs.chinese <- glm(ethgrpukborn.formula, family=poisson(link=log), data=glm.chinese))
+
+## predicted absolute tb cases
+pred.abs.chinese <- predict(object=output.env$fit.abs.chinese, newdata=glm.chinese, type="response")
+glm.chinese <- cbind(glm.chinese, pred.abs.chinese)
+@
+
+
+\paragraph{Partial pooled ethnic groups and LAs: With individual and group (LA) level predictors, Indian active TB cases only:}
+
+<<indian_prep>>=
+glm.indian <- subset(glm.mlevel, ethgrp=="Indian")
+print("Indian")
+@
+
+<<indian_only_prop>>=
+ethgrp.formula <- getformula(setdiff(ethgrp.names, c("Indian")))
+
+## la level ethnic group tb proportions
+summary(output.env$fit.prop.indian <- glm(ethgrp.formula, family=poisson(link=log), data=glm.indian))
+
+## predicted absolute tb cases
+pred.prop.indian <- predict(object=output.env$fit.prop.indian, newdata=glm.indian, type="response")
+glm.indian <- cbind(glm.indian, pred.prop.indian)
+@
+
+<<indian_only_abs>>=
+ethgrpukborn.formula <- getformula(setdiff(ethgrpUKborn.names, c("IndianNonUKborn", "IndianUKborn")))
+
+## la level ethnic group x ukborn absolute values of active tb
+summary(output.env$fit.abs.indian <- glm(ethgrpukborn.formula, family=poisson(link=log), data=glm.indian))
+
+## predicted absolute tb cases
+pred.abs.indian <- predict(object=output.env$fit.abs.indian, newdata=glm.indian, type="response")
+glm.indian <- cbind(glm.indian, pred.abs.indian)
+@
+
+
+\paragraph{Partial pooled ethnic groups and LAs: With individual and group (LA) level predictors, Mixed/other active TB cases only:}
+
+<<mixedother_prep>>=
+glm.mixedother <- subset(glm.mlevel, ethgrp=="Mixed/other")
+print("Mixed/other")
+@
+
+<<mixedother_only_prop>>=
+ethgrp.formula <- getformula(setdiff(ethgrp.names, c("Mixedother")))
+
+## la level ethnic group tb proportions
+summary(output.env$fit.prop.mixedother <- glm(ethgrp.formula, family=poisson(link=log), data=glm.mixedother))
+
+## predicted absolute tb cases
+pred.prop.mixedother <- predict(object=output.env$fit.prop.mixedother, newdata=glm.mixedother, type="response")
+glm.mixedother <- cbind(glm.mixedother, pred.prop.mixedother)
+@
+
+<<mixedother_only_abs>>=
+ethgrpukborn.formula <- getformula(setdiff(ethgrpUKborn.names, c("MixedotherNonUKborn", "MixedotherUKborn")))
+
+## la level ethnic group x ukborn absolute values of active tb
+summary(output.env$fit.abs.mixedother <- glm(ethgrpukborn.formula, family=poisson(link=log), data=glm.mixedother))
+
+## predicted absolute tb cases
+pred.abs.mixedother <- predict(object=output.env$fit.abs.mixedother, newdata=glm.mixedother, type="response")
+glm.mixedother <- cbind(glm.mixedother, pred.abs.mixedother)
+@
+
+
+\paragraph{Partial pooled ethnic groups and LAs: With individual and group (LA) level predictors, Pakistani active TB cases only:}
+
+<<pakistani_prep>>=
+glm.pakistani <- subset(glm.mlevel, ethgrp=="Pakistani")
+print("Pakistani")
+@
+
+<<pakistani_only_prop>>=
+ethgrp.formula <- getformula(setdiff(ethgrp.names, c("Pakistani")))
+
+## la level ethnic group tb proportions
+summary(output.env$fit.prop.pakistani <- glm(ethgrp.formula, family=poisson(link=log), data=glm.pakistani))
+
+## predicted absolute tb cases
+pred.prop.pakistani <- predict(object=output.env$fit.prop.pakistani, newdata=glm.pakistani, type="response")
+glm.pakistani <- cbind(glm.pakistani, pred.prop.pakistani)
+@
+
+<<pakistani_only_abs>>=
+ethgrpukborn.formula <- getformula(setdiff(ethgrpUKborn.names, c("PakistaniNonUKborn", "PakistaniUKborn")))
+
+## la level ethnic group x ukborn absolute values of active tb
+summary(output.env$fit.abs.pakistani <- glm(ethgrpukborn.formula, family=poisson(link=log), data=glm.pakistani))
+
+## predicted absolute tb cases
+pred.abs.pakistani <- predict(object=output.env$fit.abs.pakistani, newdata=glm.pakistani, type="response")
+glm.pakistani <- cbind(glm.pakistani, pred.abs.pakistani)
+@
+
+
+
+<<save>>=
+## save output environment
+## all fitted models
+ls(output.env)
+save(output.env, file=".\\output\\simplereg_output.Rda")
+@
+
+
+%% enter the following for LaTeX format:
+%% T:
+%% cd TB\TB-Port-Screening\analysis\Rob\modelling data\R\TB
+%% pandoc -o TB_simple_regression.tex TB_simple_regression.html
+
+
+
+
+\end{document}
